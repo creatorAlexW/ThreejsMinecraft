@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft - Three.js</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, 'Geneva', Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            z-index: 100;
+            font-size: 18px;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            margin-top: -10px;
+            margin-left: -10px;
+            color: white;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        #blocks {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background-color: rgba(0, 0, 0, 0.3);
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .block-type {
+            width: 30px;
+            height: 30px;
+            border: 5px solid transparent;
+            cursor: pointer;
+        }
+
+        .block-type.selected {
+            border-color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info">我的世界 - Three.js版 | WASD移动 | 鼠标移动视角 | 右键放置方块 | 左键破坏方块 | By Alex Wang | 2025/8/28</div>
+    <!-- <div id="info">Minecraft - Three.js | By Alex Wang | 2025/8 ~ 2025/9</div> -->
+    <div id="crosshair">+</div>
+    <div id="blocks">
+        <div class="block-type selected" data-type="grass" style="background-color: #66a94d;"></div>
+        <div class="block-type" data-type="snow" style="background-color: #f0f0f0;"></div>
+        <div class="block-type" data-type="dirt" style="background-color: #8c6c4a;"></div>
+        <div class="block-type" data-type="stone" style="background-color: #8a8a8a;"></div>
+        <div class="block-type" data-type="wood" style="background-color: #8f563a;"></div>
+    </div>
+    <!-- <div>2025/8/28</div> -->
+    <!-- <div>2025/9</div> -->
+
+    <audio id="bgMusic" loop style="display: none;">
+        <source src="NewLook.mp3" type="audio/mpeg">
+    </audio>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.min.js"></script>
+
+    <script>
+        // console.log
+        console.log("王子太")
+        console.log("2025/12/11")
+        // 全局变量
+        let musicStarted = false;//backgroundMusic
+        let camera, scene, renderer;
+        let controls;
+        let raycaster;
+        let blocks = [];
+        let blockColliders = []; // 存储碰撞箱
+        const choice = Math.round(Math.random() * 1)//大地方块选择器
+        // let selectedBlockType = 'grass';
+        const blockSize = 1;
+        const worldSize = 8;
+        const fun = Math.round(Math.random() * 4)
+        //
+        const playerHeight = 1.7;
+        const playerWidth = 0.6;
+        const playerDepth = 0.6;
+        const collisionPadding = 0.05; // 碰撞箱比实际方块大的部分
+
+        // 初始化场景
+        function init() {
+            // 创建场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); // 天空蓝
+            // scene.fog = new THREE.Fog(0x0a0a0a, 15, 30);
+
+            // 创建相机
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 110, 0);
+
+            // 创建渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            // renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // 添加光源
+            const ambientLight = new THREE.AmbientLight(0x909090);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(0.8, 1, 0.6).normalize();
+            scene.add(directionalLight);
+
+            // 初始化射线检测器
+            raycaster = new THREE.Raycaster();
+
+            // 创建指针锁定控制
+            controls = new THREE.PointerLockControls(camera, document.body);
+
+            // 点击页面时锁定指针
+            document.addEventListener('click', function () {
+                if (!controls.isLocked) {
+                    controls.lock();
+                }
+            });
+
+            controls.addEventListener('lock', function () {
+                document.getElementById('info').style.display = 'none';
+            });
+
+            controls.addEventListener('unlock', function () {
+                document.getElementById('info').style.display = 'block';
+            });
+
+            // 生成地形
+            generateTerrain(16, 16);
+
+            // 添加事件监听器
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('mousedown', onMouseDown);
+
+            // 方块选择
+            const blockElements = document.querySelectorAll('.block-type');
+            blockElements.forEach(el => {
+                el.addEventListener('click', () => {
+                    blockElements.forEach(e => e.classList.remove('selected'));
+                    el.classList.add('selected');
+                    selectedBlockType = el.getAttribute('data-type');
+                });
+            });
+
+            // 开始动画循环
+            animate();
+        }
+
+        // 选择方块类型
+        function selectBlockType(type) {
+            selectedBlockType = type;
+
+            // 更新UI
+            const blockElements = document.querySelectorAll('.block-type');
+            blockElements.forEach(el => {
+                if (el.getAttribute('data-type') === type) {
+                    el.classList.add('selected');
+                } else {
+                    el.classList.remove('selected');
+                }
+            });
+        }
+
+        // 生成简单地形
+        function generateTerrain(width, depth) {
+            // 创建地面
+            for (let x = -width / 2; x < width / 2; x++) {
+                for (let z = -depth / 2; z < depth / 2; z++) {
+                    // 简单的高度变化
+                    // const height = Math.sin(x * 0.6) * Math.cos(z * 0.6) * 2;
+                    // const height = x * z;
+                    // const height = x ^ 0.5 * z ^ 0.5;
+                    const height = x ^ 4 * z ^ 4;
+                    // const height = Math.sin(x * 0.6) + Math.cos(z * 0.6) * 2;
+                    // const height = x ^ 0.5 + z ^ 0.5;
+                    // const height = x + z;
+                    const y = Math.floor(height);
+                    //Math.round(Math.random())
+
+                    // 创建方块
+                    if (choice == 0) {
+                        createBlock(x, y, z, 'grass');
+                    } else if (choice == 1) {
+                        createBlock(x, y, z, 'snow');
+                    }
+
+                    // 在地面下创建一些泥土和石头
+                    for (let i = y - 1; i > y - 5; i--) {
+                        createBlock(x, i, z, 'dirt');
+                    }
+                    for (let i = y - 5; i > -10; i--) {
+                        createBlock(x, i, z, 'stone');
+                    }
+                }
+            }
+        }
+
+        // 创建方块
+        function createBlock(x, y, z, type) {
+            // 如果该位置已有方块，则先移除
+            removeBlock(x, y, z);
+
+            // 根据类型选择颜色
+            const or = Math.round(Math.random() * 2)
+            let color;
+            switch (type) {
+                case 'snow': color = 0xf0f0f0; break;
+                case 'grass': color = 0x66a94d; break;
+                case 'dirt': color = 0x8c6c4a; break;
+                case 'stone': color = 0x8a8a8a; break;
+                case 'wood': color = 0x8f563a; break;
+                default: color = 0x66a94d;
+            }
+
+            // 创建立方体几何体
+            const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+            const material = new THREE.MeshLambertMaterial({ color: color });
+            const cube = new THREE.Mesh(geometry, material);
+
+            // 设置位置
+            cube.position.set(x, y, z);
+
+            // 存储方块信息
+            cube.userData = { type, x, y, z };
+
+            // 添加到场景和方块数组
+            scene.add(cube);
+            blocks.push(cube);
+
+            // 创建碰撞箱（比实际方块稍大，防止穿模）
+            createCollider(x, y, z);
+
+            return cube;
+        }
+
+        // 创建碰撞箱
+        function createCollider(x, y, z) {
+            // 碰撞箱比实际方块稍大，防止穿模
+            const collider = {
+                position: { x, y, z },
+                minX: x - blockSize / 2 - collisionPadding,
+                maxX: x + blockSize / 2 + collisionPadding,
+                minY: y - blockSize / 2 - collisionPadding,
+                maxY: y + blockSize / 2 + collisionPadding,
+                minZ: z - blockSize / 2 - collisionPadding,
+                maxZ: z + blockSize / 2 + collisionPadding
+            };
+
+            blockColliders.push(collider);
+            return collider;
+        }
+
+        // 移除方块
+        function removeBlock(x, y, z) {
+            // 移除可见方块
+            for (let i = 0; i < blocks.length; i++) {
+                const block = blocks[i];
+                if (block.userData.x === x && block.userData.y === y && block.userData.z === z) {
+                    scene.remove(block);
+                    blocks.splice(i, 1);
+                    break;
+                }
+            }
+
+            // 移除碰撞箱
+            for (let i = 0; i < blockColliders.length; i++) {
+                const collider = blockColliders[i];
+                if (collider.position.x === x && collider.position.y === y && collider.position.z === z) {
+                    blockColliders.splice(i, 1);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 获取指定位置的方块碰撞箱
+        function getColliderAt(x, y, z) {
+            for (const collider of blockColliders) {
+                if (Math.round(collider.position.x) === x &&
+                    Math.round(collider.position.y) === y &&
+                    Math.round(collider.position.z) === z) {
+                    return collider;
+                }
+            }
+            return null;
+        }
+
+        // 检测玩家与方块的碰撞
+        function checkCollision(newPos) {
+            // 玩家碰撞箱的边界
+            const halfWidth = playerWidth / 2;
+            const halfDepth = playerDepth / 2;
+
+            // 玩家碰撞箱的边界（扩大一点）
+            const playerMinX = newPos.x - halfWidth;
+            const playerMaxX = newPos.x + halfWidth;
+            const playerMinY = newPos.y;
+            const playerMaxY = newPos.y + playerHeight;
+            const playerMinZ = newPos.z - halfDepth;
+            const playerMaxZ = newPos.z + halfDepth;
+
+            // 检查与所有碰撞箱的碰撞
+            for (const collider of blockColliders) {
+                // 检查玩家是否与当前碰撞箱相交
+                if (playerMaxX > collider.minX &&
+                    playerMinX < collider.maxX &&
+                    playerMaxY > collider.minY &&
+                    playerMinY < collider.maxY &&
+                    playerMaxZ > collider.minZ &&
+                    playerMinZ < collider.maxZ) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // 窗口调整大小时的处理
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 键盘按下事件
+        function onKeyDown(event) {
+            // 按ESC键退出指针锁定
+            if (event.keyCode === 27) {
+                controls.unlock();
+            }
+
+            // 数字键选择方块
+            if (event.code === 'Digit1') {
+                selectBlockType('grass');
+            } else if (event.code === 'Digit2') {
+                selectBlockType('snow');
+            } else if (event.code === 'Digit3') {
+                selectBlockType('dirt');
+            } else if (event.code === 'Digit4') {
+                selectBlockType('stone');
+            } else if (event.code === 'Digit5') {
+                selectBlockType('wood');
+            }
+        }
+
+        // 鼠标按下事件
+        function onMouseDown(event) {
+            if (!controls.isLocked) return;
+
+            // 设置射线从相机位置发出
+            raycaster.setFromCamera(new THREE.Vector2(), camera);
+
+            // 计算射线与方块的交点
+            const intersects = raycaster.intersectObjects(blocks);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+
+                if (event.button === 2) { // 右键放置方块
+                    // 计算新方块的位置（在点击的方块面上）
+                    const normal = intersect.face.normal;
+                    const newPos = intersect.object.position.clone().add(normal);
+
+                    // 创建新方块
+                    createBlock(
+                        Math.round(newPos.x),
+                        Math.round(newPos.y),
+                        Math.round(newPos.z),
+                        selectedBlockType
+                    );
+                } else if (event.button === 0) { // 左键破坏方块
+                    // 移除被点击的方块
+                    const block = intersect.object;
+                    removeBlock(
+                        Math.round(block.position.x),
+                        Math.round(block.position.y),
+                        Math.round(block.position.z)
+                    );
+                }
+            }
+        }
+
+        // 阻止右键菜单
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 更新控制器
+            if (controls.isLocked) {
+                // 保存原始位置用于碰撞检测
+                const originalPosition = camera.position.clone();
+
+                // 简单的移动控制（WASD）
+                const moveSpeed = 0.15;
+                const moveVector = new THREE.Vector3();
+
+                if (isKeyPressed('KeyW')) moveVector.z -= moveSpeed;
+                if (isKeyPressed('KeyS')) moveVector.z += moveSpeed;
+                if (isKeyPressed('KeyA')) moveVector.x -= moveSpeed;
+                if (isKeyPressed('KeyD')) moveVector.x += moveSpeed;
+
+                // 应用移动
+                controls.moveForward(-moveVector.z);
+                controls.moveRight(moveVector.x);
+
+                // 检测碰撞
+                if (checkCollision(camera.position)) {
+                    // 如果发生碰撞，恢复原始位置
+                    camera.position.copy(originalPosition);
+                }
+
+                // 简单的重力模拟
+                const gravity = 0.09;
+                camera.position.y -= gravity;
+
+                // 检测是否站在方块上
+                const feetPos = camera.position.clone();
+                feetPos.y -= playerHeight; // 角色脚部位置
+
+                // 检查脚下是否有碰撞箱
+                let isGrounded = false;
+                for (const collider of blockColliders) {
+                    if (camera.position.x >= collider.minX &&
+                        camera.position.x <= collider.maxX &&
+                        feetPos.y <= collider.maxY &&
+                        feetPos.y >= collider.minY &&
+                        camera.position.z >= collider.minZ &&
+                        camera.position.z <= collider.maxZ) {
+                        isGrounded = true;
+                        // 将玩家放在方块上方
+                        camera.position.y = collider.maxY + playerHeight;
+                        break;
+                    }
+                }
+
+                // 跳跃（空格键）
+                if (isKeyPressed('Space') && isGrounded) {
+                    camera.position.y += 1.1;
+                }
+            }
+
+            // 渲染场景
+            renderer.render(scene, camera);
+        }
+
+        // 跟踪按下的键
+        const pressedKeys = {};
+        document.addEventListener('keydown', event => { pressedKeys[event.code] = true; });
+        document.addEventListener('keyup', event => { pressedKeys[event.code] = false; });
+
+        function isKeyPressed(code) {
+            return pressedKeys[code] === true;
+        }
+
+        // 初始化应用
+        init();
+
+        //music
+        document.addEventListener('click', function () {
+            if (!musicStarted) {
+                const audio = document.getElementById('bgMusic');
+                audio.play()
+                    .then(() => {
+                        musicStarted = true;
+                    })
+                    .catch(error => {
+                        console.log('播放失败:', error);
+                    });
+            }
+        });
+
+        // 确保音乐循环
+        document.getElementById('bgMusic').addEventListener('ended', function () {
+            this.currentTime = 0;
+            this.play();
+        });
+    </script>
+</body>
+
+</html>
