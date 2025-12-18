@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft - Three.js</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, 'Geneva', Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            z-index: 100;
+            font-size: 18px;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            margin-top: -10px;
+            margin-left: -10px;
+            color: white;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        #blocks {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background-color: rgba(0, 0, 0, 0.3);
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .block-type {
+            width: 30px;
+            height: 30px;
+            border: 5px solid transparent;
+            cursor: pointer;
+        }
+
+        .block-type.selected {
+            border-color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info">Minecraft - 正交投影 | WASD移动 | 鼠标移动视角 | 右键放置方块 | 左键破坏方块 | 空格上升 | Shift下降 | By Alex Wang | 2025/12</div>
+    <div id="crosshair">+</div>
+    <div id="blocks">
+        <div class="block-type selected" data-type="grass" style="background-color: #66a94d;"></div>
+        <div class="block-type" data-type="snow" style="background-color: #f0f0f0;"></div>
+        <div class="block-type" data-type="dirt" style="background-color: #8c6c4a;"></div>
+        <div class="block-type" data-type="stone" style="background-color: #8a8a8a;"></div>
+        <div class="block-type" data-type="wood" style="background-color: #8f563a;"></div>
+    </div>
+
+    <audio id="bgMusic" loop style="display: none;">
+        <source src="NewLook.mp3" type="audio/mpeg">
+    </audio>
+
+    <!-- <div>2025/12/11</div> -->
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.min.js"></script>
+
+    <script>
+        // console.log
+        console.log("王子太")
+        console.log("2025/12/11")
+        // 全局变量
+        let camera, scene, renderer;
+        let controls;
+        let raycaster;
+        let blocks = [];
+        let blockColliders = [];
+        const choice = Math.round(Math.random() * 1);
+        let selectedBlockType = 'grass';
+        const blockSize = 1;
+
+        // 正交相机参数
+        let orthographicCamera;
+        let aspectRatio;
+        const orthographicSize = 20;
+
+        // 初始化场景
+        function init() {
+            // 创建场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+
+            // 计算宽高比
+            aspectRatio = window.innerWidth / window.innerHeight;
+
+            // 创建正交投影相机
+            orthographicCamera = new THREE.OrthographicCamera(
+                -orthographicSize * aspectRatio,
+                orthographicSize * aspectRatio,
+                orthographicSize,
+                -orthographicSize,
+                0.1,
+                1000
+            );
+
+            // 设置相机位置和朝向 - 使用俯视角度
+            orthographicCamera.position.set(0, 30, 0);
+            orthographicCamera.lookAt(0, 0, 0);
+            camera = orthographicCamera;
+
+            // 创建渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 添加光源
+            const ambientLight = new THREE.AmbientLight(0x909090);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(0.8, 1, 0.6).normalize();
+            scene.add(directionalLight);
+
+            // 初始化射线检测器
+            raycaster = new THREE.Raycaster();
+
+            // 创建指针锁定控制
+            controls = new THREE.PointerLockControls(camera, document.body);
+
+            // 点击页面时锁定指针
+            document.addEventListener('click', function () {
+                if (!controls.isLocked) {
+                    controls.lock();
+                }
+            });
+
+            controls.addEventListener('lock', function () {
+                document.getElementById('info').style.display = 'none';
+            });
+
+            controls.addEventListener('unlock', function () {
+                document.getElementById('info').style.display = 'block';
+            });
+
+            // 生成地形
+            generateTerrain(16, 16);
+
+            // 添加事件监听器
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('mousedown', onMouseDown);
+
+            // 方块选择
+            const blockElements = document.querySelectorAll('.block-type');
+            blockElements.forEach(el => {
+                el.addEventListener('click', () => {
+                    blockElements.forEach(e => e.classList.remove('selected'));
+                    el.classList.add('selected');
+                    selectedBlockType = el.getAttribute('data-type');
+                });
+            });
+
+            // 开始动画循环
+            animate();
+        }
+
+        // 选择方块类型
+        function selectBlockType(type) {
+            selectedBlockType = type;
+
+            const blockElements = document.querySelectorAll('.block-type');
+            blockElements.forEach(el => {
+                if (el.getAttribute('data-type') === type) {
+                    el.classList.add('selected');
+                } else {
+                    el.classList.remove('selected');
+                }
+            });
+        }
+
+        // 生成简单地形
+        function generateTerrain(width, depth) {
+            for (let x = -width / 2; x < width / 2; x++) {
+                for (let z = -depth / 2; z < depth / 2; z++) {
+                    const height = Math.sin(x * 0.3) * Math.cos(z * 0.3) * 3;
+                    const y = Math.floor(height);
+
+                    if (choice == 0) {
+                        createBlock(x, y, z, 'grass');
+                    } else if (choice == 1) {
+                        createBlock(x, y, z, 'snow');
+                    }
+
+                    for (let i = y - 1; i > y - 5; i--) {
+                        createBlock(x, i, z, 'dirt');
+                    }
+                    for (let i = y - 5; i > -10; i--) {
+                        createBlock(x, i, z, 'stone');
+                    }
+                }
+            }
+
+            // 添加一些树
+            for (let i = 0; i < 10; i++) {
+                const x = Math.floor(Math.random() * width - width / 2);
+                const z = Math.floor(Math.random() * depth - depth / 2);
+                createTree(x, 0, z);
+            }
+        }
+
+        // 创建树
+        function createTree(x, y, z) {
+            // 查找地面高度
+            let groundY = y;
+            for (let testY = 10; testY >= -10; testY--) {
+                if (getColliderAt(x, testY, z)) {
+                    groundY = testY + 1;
+                    break;
+                }
+            }
+
+            // 树干
+            for (let i = 0; i < 5; i++) {
+                createBlock(x, groundY + i, z, 'wood');
+            }
+
+            // 树叶
+            for (let dx = -2; dx <= 2; dx++) {
+                for (let dy = 0; dy <= 3; dy++) {
+                    for (let dz = -2; dz <= 2; dz++) {
+                        if (Math.abs(dx) + Math.abs(dz) + dy !== 0) {
+                            createBlock(x + dx, groundY + 5 + dy, z + dz, 'grass');
+                        }
+                    }
+                }
+            }
+        }
+
+        // 获取指定位置的方块碰撞箱
+        function getColliderAt(x, y, z) {
+            for (const collider of blockColliders) {
+                if (Math.round(collider.position.x) === Math.round(x) &&
+                    Math.round(collider.position.y) === Math.round(y) &&
+                    Math.round(collider.position.z) === Math.round(z)) {
+                    return collider;
+                }
+            }
+            return null;
+        }
+
+        // 创建方块
+        function createBlock(x, y, z, type) {
+            removeBlock(x, y, z);
+
+            let color;
+            switch (type) {
+                case 'snow': color = 0xf0f0f0; break;
+                case 'grass': color = 0x66a94d; break;
+                case 'dirt': color = 0x8c6c4a; break;
+                case 'stone': color = 0x8a8a8a; break;
+                case 'wood': color = 0x8f563a; break;
+                default: color = 0x66a94d;
+            }
+
+            const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+            const material = new THREE.MeshLambertMaterial({ color: color });
+            const cube = new THREE.Mesh(geometry, material);
+
+            cube.position.set(x, y, z);
+            cube.userData = { type, x, y, z };
+
+            scene.add(cube);
+            blocks.push(cube);
+
+            createCollider(x, y, z);
+
+            return cube;
+        }
+
+        // 创建碰撞箱
+        function createCollider(x, y, z) {
+            const collider = {
+                position: { x, y, z },
+                minX: x - blockSize / 2,
+                maxX: x + blockSize / 2,
+                minY: y - blockSize / 2,
+                maxY: y + blockSize / 2,
+                minZ: z - blockSize / 2,
+                maxZ: z + blockSize / 2
+            };
+
+            blockColliders.push(collider);
+            return collider;
+        }
+
+        // 移除方块
+        function removeBlock(x, y, z) {
+            for (let i = 0; i < blocks.length; i++) {
+                const block = blocks[i];
+                if (block.userData.x === x && block.userData.y === y && block.userData.z === z) {
+                    scene.remove(block);
+                    blocks.splice(i, 1);
+                    break;
+                }
+            }
+
+            for (let i = 0; i < blockColliders.length; i++) {
+                const collider = blockColliders[i];
+                if (collider.position.x === x && collider.position.y === y && collider.position.z === z) {
+                    blockColliders.splice(i, 1);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 窗口调整大小时的处理
+        function onWindowResize() {
+            aspectRatio = window.innerWidth / window.innerHeight;
+
+            orthographicCamera.left = -orthographicSize * aspectRatio;
+            orthographicCamera.right = orthographicSize * aspectRatio;
+            orthographicCamera.top = orthographicSize;
+            orthographicCamera.bottom = -orthographicSize;
+            orthographicCamera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 键盘按下事件
+        function onKeyDown(event) {
+            if (event.keyCode === 27) {
+                controls.unlock();
+            }
+
+            if (event.code === 'Digit1') {
+                selectBlockType('grass');
+            } else if (event.code === 'Digit2') {
+                selectBlockType('snow');
+            } else if (event.code === 'Digit3') {
+                selectBlockType('dirt');
+            } else if (event.code === 'Digit4') {
+                selectBlockType('stone');
+            } else if (event.code === 'Digit5') {
+                selectBlockType('wood');
+            }
+        }
+
+        // 鼠标按下事件
+        function onMouseDown(event) {
+            if (!controls.isLocked) return;
+
+            raycaster.setFromCamera(new THREE.Vector2(), camera);
+            const intersects = raycaster.intersectObjects(blocks);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+
+                if (event.button === 2) {
+                    const normal = intersect.face.normal;
+                    const newPos = intersect.object.position.clone().add(normal);
+
+                    createBlock(
+                        Math.round(newPos.x),
+                        Math.round(newPos.y),
+                        Math.round(newPos.z),
+                        selectedBlockType
+                    );
+                } else if (event.button === 0) {
+                    const block = intersect.object;
+                    removeBlock(
+                        Math.round(block.position.x),
+                        Math.round(block.position.y),
+                        Math.round(block.position.z)
+                    );
+                }
+            }
+        }
+
+        // 阻止右键菜单
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (controls.isLocked) {
+                const moveSpeed = 0.15;
+                const verticalSpeed = 0.15; // 垂直移动速度
+                const moveVector = new THREE.Vector3();
+
+                if (isKeyPressed('KeyW')) moveVector.z -= moveSpeed;
+                if (isKeyPressed('KeyS')) moveVector.z += moveSpeed;
+                if (isKeyPressed('KeyA')) moveVector.x -= moveSpeed;
+                if (isKeyPressed('KeyD')) moveVector.x += moveSpeed;
+
+                // 垂直移动控制（已取消重力）
+                if (isKeyPressed('Space')) { // 空格键上升
+                    moveVector.y += verticalSpeed;
+                }
+                if (isKeyPressed('ShiftLeft') || isKeyPressed('ShiftRight')) { // Shift键下降
+                    moveVector.y -= verticalSpeed;
+                }
+
+                // 应用移动
+                controls.moveForward(-moveVector.z);
+                controls.moveRight(moveVector.x);
+                camera.position.y += moveVector.y; // 手动控制垂直移动
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // 跟踪按下的键
+        const pressedKeys = {};
+        document.addEventListener('keydown', event => { pressedKeys[event.code] = true; });
+        document.addEventListener('keyup', event => { pressedKeys[event.code] = false; });
+
+        function isKeyPressed(code) {
+            return pressedKeys[code] === true;
+        }
+
+        // 初始化应用
+        init();
+
+        //music
+        document.addEventListener('click', function () {
+            if (!musicStarted) {
+                const audio = document.getElementById('bgMusic');
+                audio.play()
+                    .then(() => {
+                        musicStarted = true;
+                    })
+                    .catch(error => {
+                        console.log('播放失败:', error);
+                    });
+            }
+        });
+
+        // 确保音乐循环
+        document.getElementById('bgMusic').addEventListener('ended', function () {
+            this.currentTime = 0;
+            this.play();
+        });
+    </script>
+</body>
+
+</html>
